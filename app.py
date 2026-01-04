@@ -11,7 +11,10 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# --- Konstanta: reikalaujami stulpeliai ---
+# --- Versijos žyma, kad matytum, jog pasileido nauja versija ---
+st.caption("build: v2026-01-04-11:05 (iterrows + numeric fix)")
+
+# --- Reikalaujami stulpeliai (tiksliai kaip tavo faile) ---
 REQUIRED_COLS = [
     "Skyrius",
     "Objekto adresas",
@@ -27,7 +30,7 @@ REQUIRED_COLS = [
     "Vadybininkas",
 ]
 
-# --- UI ir tema ---
+# --- UI ---
 st.set_page_config(page_title="Aktų generatorius", page_icon="📄", layout="wide")
 st.title("📄 Atliktų darbų aktų generatorius (Streamlit Cloud)")
 
@@ -52,7 +55,11 @@ def sanitize_filename(name: str) -> str:
 
 @st.cache_data(show_spinner=False)
 def read_excel_to_df(file_bytes: bytes) -> pd.DataFrame:
-    """Skaitymas iš baitų (Cloud-friendly). Pirmas lapas laikomas duomenų lapu."""
+    """
+    Skaitymas iš baitų (Cloud-friendly).
+    Pirmas lapas laikomas duomenų lapu.
+    Palaikomos lietuviškos diakritikos ir datos.
+    """
     xl = pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl")
     df = xl.parse(xl.sheet_names[0])
     df.columns = [str(c).strip() for c in df.columns]
@@ -70,11 +77,14 @@ def validate_cols(df: pd.DataFrame):
     return missing
 
 def df_to_items(g: pd.DataFrame) -> pd.DataFrame:
-    """Iš grupės paima reikalingus stulpelius ir sutvarko tipus, kad rašymas į Excel būtų saugus."""
+    """
+    Iš grupės paima reikalingus stulpelius ir sutvarko tipus,
+    kad rašymas į Excel būtų saugus (be tipų klaidų).
+    """
     cols = ["Paslaugos pavadinimas", "Plotas (m2)", "Įkainis (Eur be PVM)", "Suma"]
     items = g[cols].copy()
 
-    # Skaitiniai stulpeliai -> numeric, klaidas verčiame į 0
+    # Skaitiniai stulpeliai -> numeric, klaidas verčiame į 0.0
     for c in ["Plotas (m2)", "Įkainis (Eur be PVM)", "Suma"]:
         items[c] = pd.to_numeric(items[c], errors="coerce").fillna(0.0)
 
@@ -127,9 +137,9 @@ def write_act_to_sheet(wb, sheet_name: str, meta: dict, items: pd.DataFrame, pvm
     for col, h in enumerate(table_headers):
         ws.write(end_header_row, col, h, hdr_fmt)
 
-    # Eilučių rašymas (saugus su diakritika ir tarpais)
+    # Eilučių rašymas (saugus su diakritika ir tarpais → jokio getattr)
     start = end_header_row + 1
-    for i, (_, row) in enumerate(items.iterrows(), start=1):
+    for i, row in enumerate(items.to_dict("records"), start=1):
         ws.write(start + i - 1, 0, i, text_fmt)
         ws.write(start + i - 1, 1, row["Paslaugos pavadinimas"], text_fmt)
         ws.write_number(start + i - 1, 2, float(row["Plotas (m2)"]), num_fmt)
@@ -165,7 +175,11 @@ def build_act_filename(meta: dict) -> str:
     return sanitize_filename(base) + ".xlsx"
 
 def generate_acts_zip_in_memory(df: pd.DataFrame, pvm_pct: float, show_pvm: bool, single_file: bool) -> bytes:
-    """Generuoja ZIP su Excel aktais: vienas xlsx su daug sheet'ų arba daug xlsx failų ZIP viduje."""
+    """
+    Generuoja ZIP su Excel aktais:
+    - vienas .xlsx su daug sheet'ų, arba
+    - daug .xlsx failų ZIP viduje.
+    """
     grp_cols = ["Užsakovas", "Sutarties numeris", "Objekto adresas"]
     groups = df.groupby(grp_cols, dropna=False)
 
