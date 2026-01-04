@@ -1,4 +1,5 @@
 
+
 # app.py
 # Streamlit Cloud Atliktų darbų aktų generatorius (tik Excel, be PDF)
 # Paleidimas Cloud'e: "Deploy from GitHub" -> app.py
@@ -11,10 +12,15 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# --- Versijos žyma, kad matytum, jog pasileido nauja versija ---
-st.caption("build: v2026-01-04-11:05 (iterrows + numeric fix)")
+# ------------------------------------------------------------
+# Puslapio konfigūracija
+# ------------------------------------------------------------
+st.set_page_config(page_title="Aktų generatorius", page_icon="📄", layout="wide")
+st.caption("build: v2026-01-04-12:10")
 
-# --- Reikalaujami stulpeliai (tiksliai kaip tavo faile) ---
+# ------------------------------------------------------------
+# Reikalaujami stulpeliai (tiksliai kaip duomenų faile)
+# ------------------------------------------------------------
 REQUIRED_COLS = [
     "Skyrius",
     "Objekto adresas",
@@ -30,8 +36,9 @@ REQUIRED_COLS = [
     "Vadybininkas",
 ]
 
-# --- UI ---
-st.set_page_config(page_title="Aktų generatorius", page_icon="📄", layout="wide")
+# ------------------------------------------------------------
+# UI
+# ------------------------------------------------------------
 st.title("📄 Atliktų darbų aktų generatorius (Streamlit Cloud)")
 
 with st.sidebar:
@@ -44,7 +51,9 @@ with st.sidebar:
 
 uploaded = st.file_uploader("Įkelk Excel (.xlsx) su duomenimis", type=["xlsx"])
 
-# --- Pagalbinės funkcijos ---
+# ------------------------------------------------------------
+# Pagalbinės funkcijos
+# ------------------------------------------------------------
 
 def sanitize_filename(name: str) -> str:
     """Saugus failo pavadinimo paruošimas (be draudžiamų simbolių)."""
@@ -58,7 +67,6 @@ def read_excel_to_df(file_bytes: bytes) -> pd.DataFrame:
     """
     Skaitymas iš baitų (Cloud-friendly).
     Pirmas lapas laikomas duomenų lapu.
-    Palaikomos lietuviškos diakritikos ir datos.
     """
     xl = pd.ExcelFile(io.BytesIO(file_bytes), engine="openpyxl")
     df = xl.parse(xl.sheet_names[0])
@@ -137,7 +145,7 @@ def write_act_to_sheet(wb, sheet_name: str, meta: dict, items: pd.DataFrame, pvm
     for col, h in enumerate(table_headers):
         ws.write(end_header_row, col, h, hdr_fmt)
 
-    # Eilučių rašymas (saugus su diakritika ir tarpais → jokio getattr)
+    # Eilučių rašymas (saugus su diakritika ir tarpais)
     start = end_header_row + 1
     for i, row in enumerate(items.to_dict("records"), start=1):
         ws.write(start + i - 1, 0, i, text_fmt)
@@ -236,7 +244,9 @@ def generate_acts_zip_in_memory(df: pd.DataFrame, pvm_pct: float, show_pvm: bool
     zip_buf.seek(0)
     return zip_buf.getvalue()
 
-# --- Pagrindinis srautas ---
+# ------------------------------------------------------------
+# Pagrindinis srautas
+# ------------------------------------------------------------
 if uploaded:
     file_bytes = uploaded.read()
     df = read_excel_to_df(file_bytes)
@@ -281,4 +291,3 @@ if uploaded:
         )
 else:
     st.info("Įkelk Excel failą, tada parink filtrus ir spausk „Generuoti aktus“.")
-
