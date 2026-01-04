@@ -1,5 +1,3 @@
-
-
 # app.py
 # Streamlit Cloud Atliktų darbų aktų generatorius (tik Excel, be PDF)
 # Paleidimas Cloud'e: "Deploy from GitHub" -> app.py
@@ -90,7 +88,14 @@ def df_to_items(g: pd.DataFrame) -> pd.DataFrame:
     kad rašymas į Excel būtų saugus (be tipų klaidų).
     """
     cols = ["Paslaugos pavadinimas", "Plotas (m2)", "Įkainis (Eur be PVM)", "Suma"]
-    items = g[cols].copy()
+    items = g.copy()
+    for c in cols:
+        if c not in items.columns:
+            # Jei stulpelis neegzistuoja, užpildome default reikšmėmis
+            if c == "Paslaugos pavadinimas":
+                items[c] = ""
+            else:
+                items[c] = 0.0
 
     # Skaitiniai stulpeliai -> numeric, klaidas verčiame į 0.0
     for c in ["Plotas (m2)", "Įkainis (Eur be PVM)", "Suma"]:
@@ -99,7 +104,7 @@ def df_to_items(g: pd.DataFrame) -> pd.DataFrame:
     # Pavadinimas kaip tekstas
     items["Paslaugos pavadinimas"] = items["Paslaugos pavadinimas"].astype(str)
 
-    return items
+    return items[cols]  # grąžiname tik reikiamus stulpelius
 
 def render_header(ws, wb, start_row, meta: dict):
     """Akto antraštės rašymas (Užsakovas, Vykdytojas, Sutartis, Adresas, Skyrius, Vadybininkas, Data)."""
@@ -149,10 +154,10 @@ def write_act_to_sheet(wb, sheet_name: str, meta: dict, items: pd.DataFrame, pvm
     start = end_header_row + 1
     for i, row in enumerate(items.to_dict("records"), start=1):
         ws.write(start + i - 1, 0, i, text_fmt)
-        ws.write(start + i - 1, 1, row["Paslaugos pavadinimas"], text_fmt)
-        ws.write_number(start + i - 1, 2, float(row["Plotas (m2)"]), num_fmt)
-        ws.write_number(start + i - 1, 3, float(row["Įkainis (Eur be PVM)"]), num_fmt)
-        ws.write_number(start + i - 1, 4, float(row["Suma"]), num_fmt)
+        ws.write(start + i - 1, 1, row.get("Paslaugos pavadinimas", ""), text_fmt)
+        ws.write_number(start + i - 1, 2, float(row.get("Plotas (m2)", 0.0)), num_fmt)
+        ws.write_number(start + i - 1, 3, float(row.get("Įkainis (Eur be PVM)", 0.0)), num_fmt)
+        ws.write_number(start + i - 1, 4, float(row.get("Suma", 0.0)), num_fmt)
 
     # Sumos
     last_row = start + len(items) - 1
@@ -174,8 +179,9 @@ def write_act_to_sheet(wb, sheet_name: str, meta: dict, items: pd.DataFrame, pvm
         ws.write_formula(suma_su_pvm_row, 4, f"=E{total_row+1}+E{pvm_row+1}", bold_num)
 
     # Pastaba apie VVS (jei ne „All VVS“)
-    if isinstance(meta.get("Nuoroda į VVS"), str) and meta["Nuoroda į VVS"] and meta["Nuoroda į VVS"] != "All VVS":
-        ws.write(suma_su_pvm_row + 2, 0, f"VVS: {meta['Nuoroda į VVS']}")
+    vvs = meta.get("Nuoroda į VVS", "")
+    if isinstance(vvs, str) and vvs and vvs != "All VVS":
+        ws.write(suma_su_pvm_row + 2, 0, f"VVS: {vvs}")
 
 def build_act_filename(meta: dict) -> str:
     """Sukuria aiškų failo pavadinimą iš metaduomenų."""
@@ -193,6 +199,8 @@ def generate_acts_zip_in_memory(df: pd.DataFrame, pvm_pct: float, show_pvm: bool
 
     zip_buf = io.BytesIO()
 
+    import zipfile
+
     if single_file:
         # Vienas .xlsx su daug lapų
         xlsx_buf = io.BytesIO()
@@ -200,7 +208,7 @@ def generate_acts_zip_in_memory(df: pd.DataFrame, pvm_pct: float, show_pvm: bool
             wb = writer.book
             for (uzs, sut, addr), g in groups:
                 items = df_to_items(g)
-                first = g.iloc[0]
+                first = g.iloc[0].to_dict()  # saugus prieigos būdas
                 meta = {
                     "Užsakovas": uzs,
                     "Vykdytojas": first.get("Vykdytojas", ""),
@@ -214,20 +222,18 @@ def generate_acts_zip_in_memory(df: pd.DataFrame, pvm_pct: float, show_pvm: bool
                 sheet_name = sanitize_filename(f"{uzs} [{sut}]")[:31]
                 write_act_to_sheet(wb, sheet_name, meta, items, pvm_pct, show_pvm)
 
-        import zipfile
         with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
             z.writestr("AKTAI_VIENAME.xlsx", xlsx_buf.getvalue())
 
     else:
         # Daug .xlsx failų ZIP viduje
-        import zipfile
         with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
             for (uzs, sut, addr), g in groups:
                 xlsx_buf = io.BytesIO()
                 with pd.ExcelWriter(xlsx_buf, engine="xlsxwriter") as writer:
                     wb = writer.book
                     items = df_to_items(g)
-                    first = g.iloc[0]
+                    first = g.iloc[0].to_dict()  # saugus prieigos būdas
                     meta = {
                         "Užsakovas": uzs,
                         "Vykdytojas": first.get("Vykdytojas", ""),
@@ -291,3 +297,8 @@ if uploaded:
         )
 else:
     st.info("Įkelk Excel failą, tada parink filtrus ir spausk „Generuoti aktus“.")
+
+   
+    
+ 
+
