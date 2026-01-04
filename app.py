@@ -1,65 +1,52 @@
-import pandas as pd
-from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
-from datetime import datetime
+def write_act_to_sheet(ws, sheet_name, meta, items, pvm_pct, show_pvm):
+    """
+    ws: Excel sheet objektas (pvz., xlwt.Workbook().add_sheet)
+    meta: dict su header info (Užsakovas, Tiekėjas ir pan.)
+    items: list of dict arba pandas Series su lentelės duomenimis
+    pvm_pct: PVM procentas
+    show_pvm: ar rodyti PVM stulpelį
+    """
 
-# Tarkime, tavo duomenys yra sąraše žodynų formatu
-data = [
-    {
-        "Užsakovas": "Įmonė A",
-        "Tiekėjas": "Tiekėjas X",
-        "Sutarties numeris": "123",
-        "Objekto adresas": "Vilnius, Gedimino pr. 1",
-        "Skyrius": "Skyrius 1",
-        "Atlikimo data": "2026-01-04",
-        "Atlikimo laikotarpis": "2026-01 mėn.",
-        "Paslaugos pavadinimas": "Valymo paslauga",
-        "Kiekis": 10,
-        "Įkainis": 15,
-        "Suma": 150
-    },
-    # Čia galima pridėti daugiau eilučių
-]
+    # Pradžia rašyti nuo 0 eilutės
+    start = 0
 
-# Excel failui paruošti naudojame pandas DataFrame
-df_header = pd.DataFrame([
-    {
-        "Užsakovas": row.get("Užsakovas", ""),
-        "Tiekėjas": row.get("Tiekėjas", ""),
-        "Sutarties numeris": row.get("Sutarties numeris", ""),
-        "Objekto adresas": row.get("Objekto adresas", ""),
-        "Skyrius": row.get("Skyrius", ""),
-        "Atlikimo data": row.get("Atlikimo data", ""),
-        "Atlikimo laikotarpis": row.get("Atlikimo laikotarpis", ""),
-    } for row in data
-])
+    # HEADER
+    header_fields = [
+        "Užsakovas",
+        "Tiekėjas",
+        "Sutarties numeris",
+        "Objekto adresas",
+        "Skyrius",
+        "Atlikimo data",
+        "Atlikimo laikotarpis"
+    ]
 
-df_table = pd.DataFrame([
-    {
-        "Paslaugos pavadinimas": row.get("Paslaugos pavadinimas", ""),
-        "Kiekis": row.get("Kiekis", 0),
-        "Įkainis": row.get("Įkainis", 0),
-        "Suma": row.get("Suma", 0)
-    } for row in data
-])
+    for col, field in enumerate(header_fields):
+        value = meta.get(field, "")
+        ws.write(start, col, value)
+    start += 2  # paliekame vieną tarpo eilutę
 
-# Sukuriame Excel failą
-wb = Workbook()
-ws = wb.active
-ws.title = "Sąskaita"
+    # LENTELĖ
+    table_fields = ["Paslaugos pavadinimas", "Kiekis", "Įkainis", "Suma"]
+    if show_pvm:
+        table_fields.append("PVM")
 
-# Pridedame header
-for r in dataframe_to_rows(df_header, index=False, header=True):
-    ws.append(r)
+    # Parašome lentelės header
+    for col, field in enumerate(table_fields):
+        ws.write(start, col, field)
+    start += 1
 
-# Tarpo eilutė tarp header ir lentelės
-ws.append([])
+    # Parašome kiekvieną eilutę
+    for i, row in enumerate(items):
+        for col, field in enumerate(table_fields):
+            # Saugi prieiga prie reikšmių: veiks ir su dict, ir su pandas Series
+            if isinstance(row, dict):
+                value = row.get(field, "")
+            else:  # pandas Series
+                value = row[field] if field in row else ""
+            
+            # Jei reikia PVM stulpelio ir jis nerastas, pridedame
+            if field == "PVM" and show_pvm and not value:
+                value = float(row.get("Suma", 0)) * pvm_pct / 100
 
-# Pridedame lentelę
-for r in dataframe_to_rows(df_table, index=False, header=True):
-    ws.append(r)
-
-# Išsaugome failą
-excel_filename = f"saskaita_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-wb.save(excel_filename)
-print(f"Excel failas sukurtas: {excel_filename}")
+            ws.write(start + i, col, value)
