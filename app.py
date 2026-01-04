@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 """
 Aktų generatorius – vienas lapas „AKTAS“, be papildomų sheet'ų.
-Funkcionalumas:
-- Įkeli CSV/XLSX (privaloma: adresas, paslauga, įkainis, kiekis; pasirenkama: skyrius, užsakovas, vykdytojas, sutartis, vadybininkas).
-- Pasirenkamas FILTRAS pagal UŽSAKOVĄ (ir, jei reikia, pagal VADYBININKĄ).
-- Pasirenki adresą.
-- Pasirenki, kurios paslaugos (tik to adreso ir po filtrų) pateks į aktą.
-- Suvedi „Akto datą“ (viršuje). „Atliktų paslaugų data“ fiksuota: „2026 m.“.
-- Generuojamas 1 lapas „AKTAS“ su tiksliu antraščių eiliškumu ir paslaugų lentele.
+Struktūra:
+- Viršuje tik data (be „Akto data:“), po jos tuščia eilutė.
+- Užsakovas -> Vykdytojas -> (pavadinimas „Atliktų paslaugų aktas“, bold + didesnis, centruotas) -> tuščia eilutė ->
+  Sutarties nr. -> tuščia eilutė -> „Atliktų paslaugų data: 2026 m.“ -> Objekto adresas + Skyrius -> lentelė.
+- UI: filtras pagal UŽSAKOVĄ (ir, jei yra, VADYBININKĄ), tada adresas ir paslaugų pasirinkimas.
+- „Group by“ (pagal paslaugos pavadinimą ir įkainį) – sujungiamos eilutės, sumuojamas kiekis.
+- Apačioje: PARAŠŲ BLOKAS dviem stulpeliais (Užsakovas / Vykdytojas), be datų.
 """
 
 import io
@@ -122,14 +122,15 @@ def build_workbook_act_single_sheet(
     selected_address: str,
     selected_services: List[str],
     akto_data: str,
+    group_same: bool,
 ) -> Workbook:
     """
     Generuoja tik vieną lapą „AKTAS“ su:
-    - Akto data viršuje + tuščia eilutė
-    - Pavadinimas „Atliktų paslaugų aktas“ – paryškintas, didesnis, centruotas (A3:E3)
-    - Užsakovas / Vykdytojas / (tarpas) / Sutarties nr. / (tarpas) / Objekto adresas + Skyrius
-    - Atliktų paslaugų data (fiksuota): „2026 m.“
-    - Paslaugų lentelė (tik pasirinktos paslaugos to adreso), sumos, PVM, suma su PVM
+    - Viršuje tik data (be „Akto data:“) + tuščia eilutė
+    - Užsakovas, Vykdytojas, po to pavadinimas „Atliktų paslaugų aktas“ (bold, didesnis, centruotas), tarpas,
+      Sutarties nr., tarpas, „Atliktų paslaugų data: 2026 m.“, Objekto adresas + Skyrius
+    - Lentele, sumos, PVM, suma su PVM
+    - PARAŠŲ BLOKAS apačioje dviem stulpeliais (kairė – Užsakovas, dešinė – Vykdytojas), be datų
     """
     # Filtruojam pagal adresą
     dfa = df[df[col_map["address"]].astype(str).str.strip() == str(selected_address).strip()].copy()
@@ -157,35 +158,55 @@ def build_workbook_act_single_sheet(
     ws = wb.active
     ws.title = "AKTAS"
 
-    # ===== Antraštės pagal reikalavimus =====
-    ws["A1"] = f"Akto data: {akto_data}"
-    ws["A2"] = ""  # tuščia eilutė
+    # ===== Antraštės pagal tvarką =====
+    ws["A1"] = akto_data       # viršuje tik data
+    ws["A2"] = ""              # tuščia eilutė
 
-    # Pavadinimas – ryškus, didesnis, centruotas
-    ws.merge_cells("A3:E3")
-    ws["A3"] = "Atliktų paslaugų aktas"
-    ws["A3"].font = Font(bold=True, size=TITLE_FONT_SIZE)
-    ws["A3"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[3].height = 24  # šiek tiek daugiau „oro“
+    ws["A3"] = f"Užsakovas: {uzsakovas}"
+    ws["A4"] = f"Vykdytojas: {vykdytojas}"
 
-    # Rekvizitai
-    ws["A4"] = f"Užsakovas: {uzsakovas}"
-    ws["A5"] = f"Vykdytojas: {vykdytojas}"
-    ws["A6"] = ""  # tarpas
+    # Pavadinimas po 'Vykdytojas'
+    ws.merge_cells("A5:E5")
+    ws["A5"] = "Atliktų paslaugų aktas"
+    ws["A5"].font = Font(bold=True, size=TITLE_FONT_SIZE)
+    ws["A5"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[5].height = 24
+
+    ws["A6"] = ""  # tarpas po pavadinimo
+
     ws["A7"] = f"Sutarties nr.: {sutartis}"
-    ws["A8"] = ""  # tarpas
+    ws["A8"] = ""  # tarpas po sutarties
 
-    # Adresas + skyrius vienoje eilutėje
+    ws["A9"]  = "Atliktų paslaugų data: 2026 m."  # fiksuota
     addr_line = f"Objekto adresas: {selected_address}"
     if skyrius:
         addr_line += f", Skyrius: {skyrius}"
-    ws["A9"] = addr_line
+    ws["A10"] = addr_line
 
-    # Atliktų paslaugų data – fiksuota forma
-    ws["A10"] = "Atliktų paslaugų data: 2026 m."
+    ws["A11"] = ""  # tarpas prieš lentelę
 
-    # Tuščia eilutė prieš lentelę (estetikai)
-    ws["A11"] = ""
+    # ===== Paruošiame duomenis lentelei (group by pagal poreikį) =====
+    # Normalizuojam laukus
+    dfa = dfa.assign(
+        __service=dfa[col_map["service"]].astype(str).str.strip(),
+        __qty=dfa[col_map["qty"]],
+        __rate=dfa[col_map["rate"]],
+    )
+    # konvertuojam skaitines
+    dfa["__qty"]  = dfa["__qty"].apply(dec2)
+    dfa["__rate"] = dfa["__rate"].apply(dec2)
+
+    if group_same:
+        # Sujungiame vienodas paslaugas su tuo pačiu įkainiu – sumuojam kiekius
+        dfg = (
+            dfa.groupby(["__service", "__rate"], as_index=False)["__qty"]
+               .sum()
+               .sort_values(["__service", "__rate"], kind="stable")
+        )
+        rows_iter = [(r["__service"], r["__qty"], r["__rate"]) for _, r in dfg.iterrows()]
+    else:
+        # Negrupuojam – paliekam eiles tokia tvarka, kaip faile (stabiliai)
+        rows_iter = [(r["__service"], r["__qty"], r["__rate"]) for _, r in dfa.iterrows()]
 
     # ===== Lentele su paslaugomis =====
     ws["A12"], ws["B12"], ws["C12"], ws["D12"], ws["E12"] = \
@@ -194,11 +215,7 @@ def build_workbook_act_single_sheet(
     ws["A12"].font = ws["B12"].font = ws["C12"].font = ws["D12"].font = ws["E12"].font = Font(bold=True)
 
     r = 13  # duomenų eilučių pradžia
-    for i, (_, row) in enumerate(dfa.iterrows(), start=1):
-        service = str(row[col_map["service"]]).strip()
-        qty     = dec2(row[col_map["qty"]])
-        rate    = dec2(row[col_map["rate"]])
-
+    for i, (service, qty, rate) in enumerate(rows_iter, start=1):
         ws[f"A{r}"] = i
         ws[f"B{r}"] = service
         ws[f"C{r}"] = qty;  ws[f"C{r}"].number_format  = FMT_QTY
@@ -206,7 +223,7 @@ def build_workbook_act_single_sheet(
         ws[f"E{r}"] = f"=C{r}*D{r}"; ws[f"E{r}"].number_format = FMT_MONEY
         r += 1
 
-    # Tarpinė suma + PVM + galutinė
+    # ===== Tarpinė suma + PVM + galutinė =====
     ws[f"D{r}"] = "Suma (be PVM):"
     first_data_row = 13
     last_data_row  = r - 1
@@ -225,6 +242,26 @@ def build_workbook_act_single_sheet(
     ws[f"D{r}"] = "Suma su PVM:"
     ws[f"E{r}"] = f"=E{r-2}+E{r-1}"; ws[f"E{r}"].number_format = FMT_MONEY
     set_borders(ws, f"D{r-2}:E{r}", thick=True)
+    r += 2  # šiek tiek oro prieš parašų bloką
+
+    # ===== PARAŠŲ BLOKAS APAČIOJE – KAIRĖ/DEŠINĖ (be datų) =====
+    # Kairė: Užsakovas (linija per B:D)
+    ws[f"A{r}"] = "Užsakovas:"
+    ws[f"A{r}"].font = Font(bold=True)
+    for col in ("B", "C", "D"):
+        ws[f"{col}{r}"].border = Border(bottom=Side(style="thin"))
+    ws.row_dimensions[r].height = 22
+    ws[f"A{r+1}"] = "Vardas, pavardė / Pareigos"
+    ws.row_dimensions[r+1].height = 18
+
+    # Dešinė: Vykdytojas (linija per F:H)
+    ws[f"F{r}"] = "Vykdytojas:"
+    ws[f"F{r}"].font = Font(bold=True)
+    for col in ("G", "H", "I"):
+        ws[f"{col}{r}"].border = Border(bottom=Side(style="thin"))
+    ws.row_dimensions[r].height = max(ws.row_dimensions[r].height, 22)
+    ws[f"F{r+1}"] = "Vardas, pavardė / Pareigos"
+    ws.row_dimensions[r+1].height = max(ws.row_dimensions[r+1].height, 18)
 
     autosize(ws)
     return wb
@@ -263,7 +300,7 @@ if col_map.get("uzsakovas"):
         if sel_uzs:
             df = df[df[col_map["uzsakovas"]].astype(str).str.strip().isin(sel_uzs)]
 
-# (neprivaloma) VADYBININKO FILTRAS — paliekam jei yra stulpelis
+# (neprivaloma) VADYBININKO FILTRAS
 if col_map.get("vadybininkas"):
     with st.expander("Filtras pagal vadybininką (pasirenkama)", expanded=False):
         mgrs = sorted(set(str(x).strip() for x in df[col_map["vadybininkas"]].dropna()))
@@ -289,14 +326,17 @@ selected_services = st.multiselect(
     default=services_for_addr  # pagal nutylėjimą – visos
 )
 
-# Akto data (viršuje)
-akto_data = st.text_input("Akto data (rodoma viršuje)", "2026-01-04")
+# Group by pasirinkimas
+group_same = st.checkbox("Sujungti vienodas paslaugas (grupuoti pagal pavadinimą ir įkainį)", value=True)
+
+# Data viršuje (be teksto)
+akto_data = st.text_input("Data (rodoma viršuje)", "2026-01-04")
 
 # Generavimo mygtukas
 btn = st.button("Generuoti AKTĄ (XLSX)", use_container_width=True, disabled=not bool(selected_address))
 if btn:
     try:
-        wb = build_workbook_act_single_sheet(df, col_map, selected_address, selected_services, akto_data)
+        wb = build_workbook_act_single_sheet(df, col_map, selected_address, selected_services, akto_data, group_same)
         bio = io.BytesIO(); wb.save(bio); xlsx = bio.getvalue()
         st.download_button("Atsisiųsti AKTĄ", xlsx, "aktas_vienas_lapas.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
